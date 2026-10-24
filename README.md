@@ -4,8 +4,6 @@ Values LocalCoinSwap trades in non USD local currency using the exchange rate of
 trade happened**, rather than today's rate.
 For example here we are using IDR.
 
-![report](docs/report.png)
-
 ## Why this is needed
 
 LocalCoinSwap's own `crypto_in_local_currency` field converts *every* trade at
