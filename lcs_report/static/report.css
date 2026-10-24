@@ -1,0 +1,1088 @@
+/*
+ * LCS IDR Trading Report
+ *
+ * Design notes
+ * ------------
+ * Dark-first because this is a long-session financial tool. Colour is carried
+ * by semantic tokens, never raw hex, so the palette can be retuned in one
+ * place. Every foreground/background pair used for text meets WCAG 2.1 AA
+ * (4.5:1 for body, 3:1 for large text) -- verified in tests/test_contrast.py,
+ * which fails the build if a pair regresses.
+ *
+ * Direction of value is never signalled by hue alone: every positive and
+ * negative figure carries an explicit + or - and an arrow glyph, so the page
+ * still reads correctly in monochrome or with a colour vision deficiency.
+ *
+ * Spacing follows a 4px scale. Radii are deliberately small (4/6px); large
+ * radii read as consumer-friendly rather than financial-instrument.
+ */
+
+:root {
+  /* Surfaces, darkest to lightest */
+  --bg-base: #0a0c0f;
+  --bg-surface: #12151a;
+  --bg-raised: #181c23;
+  --bg-inset: #0e1116;
+  --bg-hover: #1d222a;
+
+  /* Borders */
+  --border-subtle: #1e232b;
+  --border-default: #2a313b;
+  --border-strong: #3d4653;
+
+  /* Text -- all AA on the surfaces above */
+  --text-primary: #e9ecf1;   /* 14.9:1 on --bg-surface */
+  --text-secondary: #a8b0bd; /* 7.2:1  on --bg-surface */
+  --text-tertiary: #838d9c;  /* 4.6:1  on --bg-surface */
+  --text-inverse: #0a0c0f;
+
+  /* Semantic */
+  --accent: #4c8dff;
+  /* Brighter variant for text sitting on --accent-muted; the base accent only
+     reaches 4.42:1 there, just under AA. Lightening the background makes it
+     worse, so the foreground is lifted instead. */
+  --accent-bright: #5f9bff;
+  --accent-muted: #1b2b47;
+  --accent-border: #2c4a7a;
+  --positive: #3ddc84;
+  --positive-muted: #10261a;
+  --negative: #ff6b6b;
+  --negative-muted: #2a1414;
+  --warning: #f0b429;
+  --warning-muted: #2a2210;
+
+  /* Spacing scale (4px base) */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+
+  /* Radii -- small and consistent */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg-base: #f6f7f9;
+    --bg-surface: #ffffff;
+    --bg-raised: #ffffff;
+    --bg-inset: #f2f4f7;
+    --bg-hover: #f7f9fb;
+    --border-subtle: #e4e7ec;
+    --border-default: #d3d8e0;
+    --border-strong: #aeb6c2;
+    --text-primary: #14181f;
+    --text-secondary: #4a5361;
+    --text-tertiary: #5f6875;
+    /* White, not near-black: near-black on this blue only reaches 3.35:1. */
+    --text-inverse: #ffffff;
+    --accent: #1a5fd0;
+    --accent-bright: #1a5fd0;
+    --accent-muted: #eaf1fd;
+    --accent-border: #b9d0f5;
+    --positive: #12864f;
+    --positive-muted: #e6f6ec;
+    --negative: #c62b2b;
+    --negative-muted: #fdecec;
+    --warning: #9a6400;
+    --warning-muted: #fdf3e0;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tabular figures everywhere numbers are compared vertically. */
+.num,
+table,
+.metric-value,
+.chart-label {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.wrap {
+  max-width: 1560px;
+  margin-inline: auto;
+  padding: var(--s5) var(--s4) var(--s7);
+  min-width: 0;
+}
+
+/* Grid and flex children default to min-content width, which lets a wide
+   child (a long number, a table) stretch the page. Opt them back into
+   shrinking so .table-scroll's own overflow-x does the scrolling. */
+.metrics > *,
+.filters > *,
+.section > *,
+.section-head > * {
+  min-width: 0;
+}
+
+/* Visible only to screen readers */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  left: var(--s2);
+  top: -3rem;
+  z-index: 100;
+  padding: var(--s2) var(--s3);
+  background: var(--accent);
+  color: var(--text-inverse);
+  border-radius: var(--r-md);
+  font-weight: 600;
+  transition: top 0.15s ease;
+}
+
+.skip-link:focus {
+  top: var(--s2);
+}
+
+/* Every interactive element gets the same focus treatment. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* ---------- Header ---------- */
+
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s4);
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-bottom: var(--s4);
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: var(--s5);
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+  font-weight: 650;
+}
+
+.masthead-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+
+.currency-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.currency-picker select {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 8px;
+  min-height: 30px;
+  height: 30px;
+  width: auto;
+  min-width: 80px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.masthead .account {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s4);
+  margin-top: var(--s1);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.masthead .account code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+}
+
+.fx-now {
+  text-align: right;
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+  min-width: 180px;
+}
+
+.fx-now strong {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Notices ---------- */
+
+.notice {
+  display: flex;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--border-default);
+  border-left-width: 3px;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  font-size: 13px;
+  margin-bottom: var(--s3);
+  color: var(--text-secondary);
+}
+
+.notice strong {
+  color: var(--text-primary);
+}
+
+.notice--info {
+  border-left-color: var(--accent);
+  background: var(--accent-muted);
+}
+
+.notice--warn {
+  border-left-color: var(--warning);
+  background: var(--warning-muted);
+  color: var(--warning);
+}
+
+.notice--warn strong {
+  color: var(--warning);
+}
+
+.notice-icon {
+  flex-shrink: 0;
+  font-weight: 700;
+}
+
+/* ---------- Metrics ---------- */
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(216px, 1fr));
+  gap: var(--s3);
+  margin-bottom: var(--s5);
+}
+
+.metric {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  padding: var(--s4);
+  min-width: 0;
+}
+
+.metric--primary {
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+}
+
+.metric-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: var(--s2);
+}
+
+.metric--primary .metric-label {
+  color: var(--text-secondary);
+}
+
+.metric-value {
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.metric-value .unit {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  margin-left: 3px;
+  letter-spacing: 0;
+}
+
+.metric-sub {
+  margin-top: var(--s1);
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.pos {
+  color: var(--positive);
+}
+
+.neg {
+  color: var(--negative);
+}
+
+.neutral {
+  color: var(--text-secondary);
+}
+
+/* ---------- Chart ---------- */
+
+.chart {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  padding: var(--s4);
+  margin-bottom: var(--s5);
+  /* Never let a wide chart force the whole page to scroll sideways. */
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: var(--s3);
+}
+
+.chart-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+}
+
+.chart-bars {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(44px, 1fr);
+  gap: var(--s2);
+  align-items: end;
+  height: 132px;
+}
+
+.chart-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--s2);
+  height: 100%;
+  position: relative;
+}
+
+.chart-bar {
+  width: 100%;
+  background: var(--accent);
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  min-height: 2px;
+  transition: background 0.12s ease;
+  max-width: 100%;
+}
+
+.chart-col:hover .chart-bar,
+.chart-col:focus-visible .chart-bar {
+  background: var(--accent);
+  filter: brightness(1.25);
+}
+
+.chart-year {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-value {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---------- Filters ---------- */
+
+.filters {
+  display: grid;
+  margin-top: 0;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--s3);
+  align-items: end;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  padding: var(--s4);
+  margin-bottom: var(--s4);
+}
+
+/* Sits directly above the table it controls, so it hugs it a little tighter
+   than a section-spanning filter bar would. */
+.filters--inline {
+  margin-bottom: var(--s3);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  min-width: 0;
+}
+
+.field label,
+.field .field-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+input[type="date"],
+input[type="text"],
+select {
+  width: 100%;
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 13px;
+  min-height: 34px;
+}
+
+input::placeholder {
+  color: var(--text-tertiary);
+}
+
+select {
+  cursor: pointer;
+}
+
+.field--actions {
+  flex-direction: row;
+  gap: var(--s2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: 13px;
+  color: var(--text-secondary);
+  min-height: 34px;
+  cursor: pointer;
+}
+
+/* WCAG 2.5.8 wants a 24x24 minimum target. The box stays visually small; the
+   label supplies the hit area, and the input itself is enlarged so clicking
+   near it registers. */
+.check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.check {
+  min-height: 44px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  background: var(--accent);
+  color: var(--text-inverse);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-md);
+  padding: 7px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  min-height: 34px;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  filter: brightness(1.1);
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: var(--border-default);
+  font-weight: 500;
+}
+
+.btn--ghost:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  filter: none;
+}
+
+/* ---------- Quote-currency table ---------- */
+
+.currencies__note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  max-width: 68ch;
+}
+
+/* ---------- Navigation progress ---------- */
+
+/* A 2px bar at the very top, shown only while a navigation is in flight. It
+   tells the user the click registered and the load is running, which matters
+   here because a full page load can take a while. */
+.nav-progress {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline: 0;
+  height: 2px;
+  z-index: 200;
+  background: var(--accent);
+  opacity: 0;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: opacity 0.15s ease, transform 2.5s ease-out;
+  pointer-events: none;
+}
+
+.nav-progress.is-active {
+  opacity: 1;
+  transform: scaleX(0.85);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-progress {
+    transition: none;
+  }
+}
+
+/* ---------- Year navigation ---------- */
+
+.yearnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  margin-bottom: var(--s3);
+}
+
+.yearnav__item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+}
+
+.yearnav__item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.yearnav__item.is-current {
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+  color: var(--accent-bright);
+  font-weight: 650;
+}
+
+/* ---------- Enrichment progress ---------- */
+
+.progress {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  padding: var(--s3) var(--s4);
+  margin-bottom: var(--s4);
+}
+
+.progress-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  margin-bottom: var(--s2);
+}
+
+.progress-track {
+  height: 5px;
+  background: var(--bg-inset);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+/* ---------- Tables ---------- */
+
+.section {
+  margin-bottom: var(--s6);
+}
+
+.section-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s4);
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: var(--s3);
+}
+
+.section-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.section-head p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* Any table may be wider than a narrow viewport; the scroll container keeps
+   that width from propagating up and forcing the whole page to scroll
+   sideways. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  background: var(--bg-surface);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+caption {
+  caption-side: top;
+  text-align: left;
+  padding: var(--s3) var(--s4);
+  font-size: 12px;
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  padding: var(--s3) var(--s3);
+  background: var(--bg-inset);
+  border-bottom: 1px solid var(--border-default);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+td {
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  vertical-align: top;
+  /* Gives any .sr-only label inside the cell a containing block. Without it
+     the label positions against the document origin and, sitting deep inside a
+     horizontally scrolling table, drags the whole page's scroll width out to
+     the table's full width. */
+  position: relative;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr:hover td {
+  background: var(--bg-hover);
+}
+
+.num,
+th.num {
+  text-align: right;
+}
+
+td.wrap-text {
+  white-space: normal;
+  min-width: 180px;
+}
+
+th[aria-sort] {
+  cursor: pointer;
+  user-select: none;
+}
+
+th[aria-sort]:hover {
+  color: var(--text-primary);
+}
+
+th[aria-sort]::after {
+  content: "";
+  margin-left: 5px;
+  opacity: 0.9;
+}
+
+th[aria-sort="ascending"]::after {
+  content: "\2191";
+}
+
+th[aria-sort="descending"]::after {
+  content: "\2193";
+}
+
+tfoot td {
+  background: var(--bg-inset);
+  border-top: 1px solid var(--border-strong);
+  border-bottom: none;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.row-ytd td {
+  background: color-mix(in srgb, var(--accent-muted) 45%, transparent);
+}
+
+.cell-strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.cell-muted {
+  color: var(--text-tertiary);
+}
+
+.col-emphasis {
+  background: color-mix(in srgb, var(--accent-muted) 55%, transparent);
+}
+
+tbody tr:hover .col-emphasis {
+  background: color-mix(in srgb, var(--accent-muted) 80%, transparent);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* Chips: status and direction. Text always present, colour reinforces. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.chip--buy {
+  background: var(--accent-muted);
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+.chip--sell {
+  background: var(--positive-muted);
+  color: var(--positive);
+  border-color: color-mix(in srgb, var(--positive) 40%, transparent);
+}
+
+.chip--unknown {
+  background: var(--bg-inset);
+  color: var(--text-tertiary);
+  border-color: var(--border-default);
+}
+
+.chip--settled {
+  background: var(--positive-muted);
+  color: var(--positive);
+  border-color: color-mix(in srgb, var(--positive) 35%, transparent);
+}
+
+.chip--unsettled {
+  background: var(--bg-inset);
+  color: var(--text-tertiary);
+  border-color: var(--border-default);
+}
+
+.chip--disputed {
+  background: var(--negative-muted);
+  color: var(--negative);
+  border-color: color-mix(in srgb, var(--negative) 40%, transparent);
+}
+
+/* Marks which feed priced a trade: h = hourly bar, otherwise the daily rate. */
+.src {
+  display: inline-block;
+  min-width: 14px;
+  margin-left: 3px;
+  padding: 0 3px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  font-family: var(--font-mono);
+}
+
+.src--intraday {
+  background: var(--accent-muted);
+  color: var(--accent-bright);
+  border: 1px solid var(--accent-border);
+}
+
+.snapped {
+  display: inline-block;
+  margin-left: var(--s1);
+  font-size: 10.5px;
+  color: var(--warning);
+}
+
+/* Direction is carried by the arrow and the explicit sign, never by colour
+   alone. The arrow is redundant reinforcement, so it stays small -- but not so
+   small that it stops reading as a triangle. */
+.delta-arrow {
+  font-size: 0.62em;
+  line-height: 1;
+  margin-right: 3px;
+  vertical-align: 0.06em;
+}
+
+/* ---------- Empty / error states ---------- */
+
+.state {
+  border: 1px dashed var(--border-default);
+  border-radius: var(--r-lg);
+  background: var(--bg-surface);
+  padding: var(--s6) var(--s4);
+  text-align: center;
+}
+
+.state h3 {
+  margin: 0 0 var(--s2);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.state p {
+  margin: 0 auto;
+  max-width: 46ch;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.state .btn {
+  margin-top: var(--s4);
+}
+
+.state--error {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--negative) 45%, transparent);
+  background: var(--negative-muted);
+}
+
+.state--error h3 {
+  color: var(--negative);
+}
+
+/* ---------- Pagination ---------- */
+
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3);
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--s3);
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+}
+
+.pager-links {
+  display: flex;
+  gap: var(--s2);
+}
+
+/* ---------- Footer ---------- */
+
+.foot {
+  margin-top: var(--s6);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--border-subtle);
+  font-size: 12px;
+  color: var(--text-tertiary);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s4);
+}
+
+.foot code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 900px) {
+  .masthead {
+    flex-direction: column;
+  }
+
+  .fx-now {
+    text-align: left;
+  }
+
+  .filters {
+    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  }
+
+  .metric-value {
+    font-size: 20px;
+  }
+}
+
+@media (max-width: 560px) {
+  .wrap {
+    padding: var(--s4) var(--s3) var(--s6);
+  }
+
+  .metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .filters {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .field--wide {
+    grid-column: 1 / -1;
+  }
+
+  /* A fixed per-column minimum would overflow a 320px viewport once there
+     are more than about seven years of bars, so let columns shrink instead. */
+  .chart-bars {
+    height: 104px;
+    gap: var(--s1);
+    grid-auto-columns: minmax(0, 1fr);
+  }
+
+  .chart-value {
+    display: none;
+  }
+
+  .chart-head p {
+    display: none;
+  }
+
+  .chart-col {
+    gap: var(--s1);
+  }
+}
+
+/* Very narrow phones: the two-column filter grid stops fitting. */
+@media (max-width: 380px) {
+  .filters {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-value {
+    font-size: 19px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

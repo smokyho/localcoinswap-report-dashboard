@@ -1,0 +1,476 @@
+{% extends "base.html" %}
+
+{% macro profit_cell(value, currency="IDR", pct=None) -%}
+{# Direction is carried three ways so it survives greyscale and a screen
+   reader: the arrow, an explicit sign, and a hidden label naming it. #}
+{%- if value is none -%}
+  <span class="cell-muted">&mdash;</span>
+{%- elif value == 0 -%}
+  <span class="neutral">0</span>
+{%- else -%}
+  {%- set up = value > 0 -%}
+  {# The arrow is aria-hidden decoration, so the meaning has to be in the text
+     too. Without the + a screen reader hears only a magnitude. #}
+  <span class="{{ 'pos' if up else 'neg' }}">
+    <span class="delta-arrow" aria-hidden="true">{{ '\u25B2' if up else '\u25BC' }}</span><span class="sr-only">{{ 'gain of ' if up else 'loss of ' }}</span>{{ '+' if up }}{{ fmt_money(value, currency) }}
+    {%- if pct is not none %} <span style="font-size:11px">{{ '{:,.2f}'.format(pct) }}%</span>{% endif %}
+  </span>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro status_chip(status) -%}
+{%- if status in ('COMPLETED', 'CRYPTO_REL') -%}
+  <span class="chip chip--settled">{{ status }}</span>
+{%- elif 'DISPUTE' in status or status == 'DISPUTED' -%}
+  <span class="chip chip--disputed">{{ status }}</span>
+{%- else -%}
+  <span class="chip chip--unsettled">{{ status }}</span>
+{%- endif -%}
+{%- endmacro %}
+
+{% block title %}{{ display_currency }} Trading Report &middot; {{ username or 'LCS' }}{% endblock %}
+
+{% block body %}
+<div class="wrap">
+<main id="main">
+
+<header class="masthead">
+  <div class="masthead-main">
+    <div class="masthead-title-row">
+      <h1>{{ display_currency }} Trading Report</h1>
+      <form class="currency-picker" method="get" action="/" role="form" aria-label="Change display currency">
+        {% for k, v in active_filters.items() %}
+        <input type="hidden" name="{{ k }}" value="{{ v }}">
+        {% endfor %}
+        <label for="header_currency" class="sr-only">Display currency</label>
+        <select id="header_currency" name="currency" onchange="this.form.submit()" aria-label="Select display currency">
+          {% for c in display_currency_options %}
+          <option value="{{ c }}" {% if display_currency == c %}selected{% endif %}>{{ c }}</option>
+          {% endfor %}
+        </select>
+        <noscript><button type="submit" class="btn btn--sm">Change</button></noscript>
+      </form>
+    </div>
+    <div class="account">
+      <span>Account <code>{{ username or 'unknown' }}</code></span>
+      <span>{{ summary.settled_count }} settled of {{ summary.trade_count }} total</span>
+      <span>Dates in <code>{{ trade_timezone }}</code></span>
+    </div>
+  </div>
+  <div class="fx-now">
+    <span>Trades last checked</span>
+    <strong id="freshness-val">{{ freshness }}</strong>
+    <span><span id="total-trades-val">{{ total_available }}</span> in history &middot; <span id="poll-label-val">{{ poll_now }}</span></span>
+  </div>
+</header>
+
+{% for w in warnings if 'enrichment' not in w and 'USD price' not in w %}
+<div class="notice notice--warn" role="status">
+  <span class="notice-icon" aria-hidden="true">!</span>
+  <span>{{ w }}</span>
+</div>
+{% endfor %}
+
+<div class="notice notice--info">
+  <span class="notice-icon" aria-hidden="true">i</span>
+  <span>
+    <strong>Profit</strong> is measured in each trade's <em>own quote currency</em>
+    &mdash; the leg it settled in, so buying BTC with IDR is quoted in IDR and
+    anything settled in USD is quoted in USD. It is what that crypto was worth at
+    <em>that day's</em> rate, minus what you paid. Each trade converts its USD
+    side with the rate for its own date and quote currency, never a single global
+    rate. Figures in different currencies are shown separately and never added.
+    <br>
+    <strong>Why this differs from a current-rate report:</strong> the
+    <em>at trade time</em> column divides by the
+    {{ base_currency }}/{{ display_currency }} rate published on the trade's own
+    date, snapping back to the prior business day over weekends. A
+    current-rate report applies today's rate to every trade instead &mdash; that
+    is the difference you would see.
+    {%- if fx_rate %} Today: 1 {{ base_currency }} =
+    <strong>{{ fmt_rate(fx_rate) }}</strong> {{ display_currency }}
+    (as of {{ fx_date }}).{% endif %}
+  </span>
+</div>
+
+<section class="metrics" aria-label="Headline figures">
+  <div class="metric metric--primary">
+    <div class="metric-label">Profit &mdash; {{ primary.currency if primary else 'n/a' }}</div>
+    <div class="metric-value {{ 'pos' if primary and primary.profit >= 0 else 'neg' }}" id="metric-profit">
+      {{ fmt_money(primary.profit, primary.currency) if primary else '-' }}
+    </div>
+    <div class="metric-sub">
+      {%- if primary %} {{ '{:,.2f}'.format(primary.margin_pct) }}% on {{ fmt_money(primary.cost, primary.currency) }} deployed
+      {%- else %} no settled trades{% endif %}
+    </div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Deployed ({{ primary.currency if primary else 'n/a' }})</div>
+    <div class="metric-value">{{ fmt_money(primary.cost, primary.currency) if primary else '-' }}</div>
+    <div class="metric-sub">{{ primary.trades if primary else 0 }} settled trades</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Value at each trade's own rate</div>
+    <div class="metric-value"><span id="metric-market-value">{{ fmt_money(primary.market_value, primary.currency) if primary else '-' }}</span></div>
+    <div class="metric-sub">USD side converted at the trade's date</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Bought ({{ primary.currency if primary else 'n/a' }})</div>
+    <div class="metric-value">{{ fmt_money(primary.cash_out, primary.currency) if primary else '-' }}</div>
+    <div class="metric-sub">{{ primary.cash_in and 'sold ' ~ fmt_money(primary.cash_in, primary.currency) or 'nothing sold yet' }}</div>
+  </div>
+</section>
+
+{% if totals_by_currency | length > 1 %}
+<section class="section currencies" aria-labelledby="cur-heading">
+  <div class="section-head">
+    <h2 id="cur-heading">By quote currency</h2>
+    <p class="currencies__note">
+      Never summed together &mdash; different currencies are not commensurable.
+      Each figure uses that currency's rate on each trade's own date.
+    </p>
+  </div>
+  <div class="table-scroll">
+    <table>
+      <caption class="sr-only">Profit and volume for each quote currency</caption>
+      <thead>
+        <tr>
+          <th scope="col">Quote</th>
+          <th scope="col" class="num">Trades</th>
+          <th scope="col" class="num">Bought</th>
+          <th scope="col" class="num">Sold</th>
+          <th scope="col" class="num">Profit</th>
+          <th scope="col" class="num">Margin</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in totals_by_currency %}
+        <tr{% if primary and c.currency == primary.currency %} class="row-ytd"{% endif %}>
+          <td class="cell-strong">{{ c.currency }}</td>
+          <td class="num">{{ c.trades }}</td>
+          <td class="num">{{ fmt_money(c.cash_out, c.currency) }}</td>
+          <td class="num">{{ fmt_money(c.cash_in, c.currency) }}</td>
+          <td class="num">{{ profit_cell(c.profit, c.currency) }}</td>
+          <td class="num {{ 'pos' if c.margin_pct >= 0 else 'neg' }}">{{ '{:,.2f}'.format(c.margin_pct) }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if yearly %}
+<section class="chart" aria-labelledby="chart-heading">
+  <div class="chart-head">
+    <h2 id="chart-heading">Volume by year</h2>
+    <p>in each year's dominant quote currency</p>
+  </div>
+  <div class="chart-bars">
+    {% set peak = (yearly | map(attribute='volume') | max) | float %}
+    {% for y in yearly %}
+    {% set h = ((y.volume | float / peak) * 100) if peak else 0.0 %}
+    <div class="chart-col">
+      <span class="chart-value">{{ fmt_money(y.volume, y.currency) }}</span>
+      <div class="chart-bar" style="height: {{ '%.1f' | format(h if h > 1.5 else 1.5) }}%"
+           role="img"
+           aria-label="{{ y.year }}: {{ fmt_money(y.volume, y.currency) }} across {{ y.trades }} settled trades"></div>
+      <span class="chart-year">{{ y.year }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="section" aria-labelledby="ytd-heading">
+  <div class="section-head">
+    <h2 id="ytd-heading">{{ ytd.label if ytd else 'Year to date' }}</h2>
+    <p>current year, against the same period last year</p>
+  </div>
+  {% set ytd_dom = ytd.dominant if ytd else None %}
+  {% set py_dom = prior_year.dominant if prior_year else None %}
+  <div class="metrics">
+    <div class="metric metric--primary">
+      <div class="metric-label">Profit &mdash; {{ ytd_dom.currency if ytd_dom else 'n/a' }}</div>
+      <div class="metric-value {{ 'pos' if ytd_dom and ytd_dom.profit >= 0 else 'neg' }}">
+        {{ fmt_money(ytd_dom.profit, ytd_dom.currency) if ytd_dom else '-' }}
+      </div>
+      <div class="metric-sub">
+        {%- if ytd_dom %} {{ '{:,.2f}'.format(ytd_dom.margin_pct) }}% on {{ fmt_money(ytd_dom.cost, ytd_dom.currency) }} deployed
+        {%- else %} no settled trades yet{% endif %}
+      </div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Deployed</div>
+      <div class="metric-value">{{ fmt_money(ytd_dom.cost, ytd_dom.currency) if ytd_dom else '-' }}</div>
+      <div class="metric-sub">{{ ytd.trades if ytd else 0 }} settled trades</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Value at each trade's own rate</div>
+      <div class="metric-value">{{ fmt_money(ytd_dom.market_value, ytd_dom.currency) if ytd_dom else '-' }}</div>
+      <div class="metric-sub">USD leg converted at the trade's date</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">{{ prior_year.label if prior_year else 'Last year' }}</div>
+      <div class="metric-value neutral">{{ fmt_money(py_dom.cost, py_dom.currency) if py_dom else '-' }}</div>
+      <div class="metric-sub">
+        {%- if py_dom %} {{ py_dom.trades }} trades &middot; {{ '{:,.2f}'.format(py_dom.margin_pct) }}% margin
+        {%- else %} no prior data{% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" aria-labelledby="monthly-heading">
+  <div class="section-head">
+    <h2 id="monthly-heading">Monthly report</h2>
+    <p>one year at a time &middot; money in each month's own quote currency</p>
+  </div>
+
+  {% if monthly_years | length > 1 %}
+  <nav class="yearnav" aria-label="Choose a year for the monthly report">
+    {% for y in monthly_years %}
+    <a href="{{ year_url(y) }}"
+       class="yearnav__item{% if y == monthly_year %} is-current{% endif %}"
+       {% if y == monthly_year %}aria-current="page"{% endif %}>{{ y }}</a>
+    {% endfor %}
+  </nav>
+  {% endif %}
+
+  <div class="table-scroll">
+    <table>
+      <caption class="sr-only">Monthly totals for {{ monthly_year }}, in each month's own quote currency</caption>
+      <thead>
+        <tr>
+          <th scope="col">Month</th>
+          <th scope="col">Quote</th>
+          <th scope="col" class="num">Trades</th>
+          <th scope="col" class="num">Bought</th>
+          <th scope="col" class="num">Sold</th>
+          <th scope="col" class="num">Value @ trade rates</th>
+          <th scope="col" class="num">Profit</th>
+          <th scope="col" class="num">Margin</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in monthly %}
+          {% for cur in m.currencies %}
+          {% set c = m.by_currency[cur] %}
+        <tr>
+          <td class="cell-strong">{% if loop.first %}{{ m.label }}{% endif %}</td>
+          <td><span class="chip chip--unknown">{{ cur }}</span></td>
+          <td class="num">{{ c.trades }}</td>
+          <td class="num mono">{{ fmt_money(c.cash_out, cur) }}</td>
+          <td class="num mono cell-muted">{{ fmt_money(c.cash_in, cur) }}</td>
+          <td class="num mono">{{ fmt_money(c.market_value, cur) }}</td>
+          <td class="num">{{ profit_cell(c.profit, cur) }}</td>
+          <td class="num {{ 'pos' if c.margin_pct >= 0 else 'neg' }}">{{ '{:,.2f}'.format(c.margin_pct) }}%</td>
+        </tr>
+          {% endfor %}
+        {% endfor %}
+      </tbody>
+      {% if year_total and year_total.currencies %}
+      <tfoot>
+        {% for cur in year_total.currencies %}
+        {% set c = year_total.by_currency[cur] %}
+        <tr>
+          <td class="cell-strong">{% if loop.first %}{{ monthly_year }} total{% endif %}</td>
+          <td>{{ cur }}</td>
+          <td class="num">{{ c.trades }}</td>
+          <td class="num">{{ fmt_money(c.cash_out, cur) }}</td>
+          <td class="num">{{ fmt_money(c.cash_in, cur) }}</td>
+          <td class="num">{{ fmt_money(c.market_value, cur) }}</td>
+          <td class="num">{{ profit_cell(c.profit, cur) }}</td>
+          <td class="num {{ 'pos' if c.margin_pct >= 0 else 'neg' }}">{{ '{:,.2f}'.format(c.margin_pct) }}%</td>
+        </tr>
+        {% endfor %}
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+
+  {% if not monthly %}
+  <div class="state" role="status">
+    <h3>No settled trades in {{ monthly_year or 'that year' }}</h3>
+    <p>Pick another year above, or widen the filters.</p>
+  </div>
+  {% endif %}
+</section>
+
+<section class="section" aria-labelledby="trades-heading">
+  <div class="section-head">
+    <h2 id="trades-heading">Trades</h2>
+    <p>
+      {%- if trades -%}
+      Showing {{ first_row }}&ndash;{{ last_row }} of {{ filtered_count }}
+      {%- else -%}
+      No matches
+      {%- endif -%}
+      {%- if filters.as_query() %} &middot; {{ filters.as_query() }}{% endif %}
+    </p>
+  </div>
+<form class="filters filters--inline" method="get" action="/" role="search" aria-label="Filter trades">
+  <div class="field">
+    <label for="date_from">From</label>
+    <input type="date" id="date_from" name="date_from" value="{{ filters.date_from or '' }}">
+  </div>
+  <div class="field">
+    <label for="date_to">To</label>
+    <input type="date" id="date_to" name="date_to" value="{{ filters.date_to or '' }}">
+  </div>
+  {% if display_currency != default_display_currency %}
+  <input type="hidden" name="currency" value="{{ display_currency }}">
+  {% endif %}
+  <div class="field">
+    <label for="quote">Quote currency</label>
+    <select id="quote" name="quote">
+      <option value="">All ({{ quote_options | length }})</option>
+      {% for c in quote_options %}
+      <option value="{{ c }}" {% if active_quote == c %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label for="coin">Coin</label>
+    <select id="coin" name="coin">
+      <option value="">All</option>
+      {% for c in coin_options %}
+      <option value="{{ c }}" {% if filters.coin == c %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label for="direction">Direction</label>
+    <select id="direction" name="direction">
+      <option value="">All</option>
+      <option value="buy" {% if filters.direction == 'buy' %}selected{% endif %}>Buy</option>
+      <option value="sell" {% if filters.direction == 'sell' %}selected{% endif %}>Sell</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="status">Status</label>
+    <select id="status" name="status">
+      <option value="">All</option>
+      {% for s in status_options %}
+      <option value="{{ s }}" {% if filters.status == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field field--wide">
+    <label for="search">Search</label>
+    <input type="text" id="search" name="search" value="{{ filters.search }}"
+           placeholder="counterparty, payment method, location">
+  </div>
+  <div class="field field--wide">
+    <label class="check" for="settled_only">
+      <input type="checkbox" id="settled_only" name="settled_only" value="1" {% if filters.settled_only %}checked{% endif %}>
+      Settled trades only
+    </label>
+  </div>
+  <div class="field field--actions field--wide">
+    <button type="submit" class="btn">Apply</button>
+    <a href="/"><button type="button" class="btn btn--ghost">Reset</button></a>
+    {% if not enrichment.running %}
+    <button type="button" class="btn btn--ghost" id="enrich-btn">Price all trades</button>
+    {% endif %}
+    <a href="/api/report{% if query_string %}?{{ query_string }}{% endif %}"><button type="button" class="btn btn--ghost">JSON</button></a>
+  </div>
+</form>
+{% for w in warnings if 'enrichment' in w or 'USD price' in w %}
+<div class="notice notice--warn" role="status">
+  <span class="notice-icon" aria-hidden="true">!</span>
+  <span>{{ w }}</span>
+</div>
+{% endfor %}
+  {% if trades %}
+  <div class="table-scroll">
+    <table id="trades-table">
+      <caption class="sr-only">
+        Individual trades with the exchange rate applied on each trade's own date
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col" class="sortable" data-sort="date" aria-sort="none">Date</th>
+          <th scope="col" class="sortable" data-sort="coin" aria-sort="none">Coin</th>
+          <th scope="col" class="sortable num" data-sort="amount" aria-sort="none">Amount</th>
+          <th scope="col">Dir</th>
+          <th scope="col">Counterpart</th>
+          <th scope="col">Status</th>
+          <th scope="col" class="num">USD @ trade</th>
+          <th scope="col" class="num">FX that day</th>
+          <th scope="col">Quote</th>
+          <th scope="col" class="num">Value @ trade rate</th>
+          <th scope="col" class="num">Paid</th>
+          <th scope="col" class="num" title="The trading fee, charged in the coin (1% of the amount, or a per-coin minimum if that is larger) and valued at that day's rate.">Fee</th>
+          <th scope="col" class="num" title="What you keep, net of the fee, minus what you paid that day.">Profit</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in trades %}
+        <tr data-uuid="{{ t.uuid }}">
+          <td class="mono">{{ t.trade_date or '?' }}</td>
+          <td class="cell-strong">{{ t.coin_label }}</td>
+          <td class="num mono">{{ fmt_crypto(t.coin_amount) }}</td>
+          <td><span class="chip chip--{{ t.direction }}">{{ t.direction }}</span></td>
+          <td class="cell-muted wrap-text">{{ t.counterpart or '-' }}</td>
+          <td>{{ status_chip(t.status) }}</td>
+          <td class="num mono cell-muted" data-cell="usd">{{ fmt_usd(t.coin_in_usd) }}</td>
+          <td class="num mono">
+            {{ fmt_rate(t.fx_rate) }}
+            {%- if t.fx_source == 'intraday' %}
+              <span class="src src--intraday" title="Hourly bar at or before this trade">h</span>
+            {%- elif t.fx_snapped %}
+              <span class="snapped" title="Daily reference rate, shifted back: this trade happened before that day's rate was published, or on a non-publication day">{{ t.fx_date }}</span>
+            {%- endif %}
+          </td>
+          <td><span class="chip chip--unknown">{{ t.quote_currency or '?' }}</span></td>
+          <td class="num col-emphasis cell-strong" data-cell="market">{{ fmt_money(t.market_value_quote, t.quote_currency) }}</td>
+          <td class="num mono cell-muted">{{ fmt_money(t.fiat_amount, t.quote_currency) }}</td>
+          <td class="num mono cell-muted" data-cell="fee">{{ fmt_money(t.fee_value_quote, t.quote_currency) }}</td>
+          <td class="num" data-cell="profit">{{ profit_cell(t.profit, t.quote_currency) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if page_count > 1 %}
+  <nav class="pager" aria-label="Pagination">
+    <span>Page {{ page }} of {{ page_count }}{% if filtered_count %} &middot; {{ filtered_count }} trades{% endif %}</span>
+    <div class="pager-links">
+      {% if page > 1 %}
+      <a href="{{ page_url(1) }}"><button type="button" class="btn btn--ghost">First</button></a>
+      <a href="{{ page_url(page - 1) }}"><button type="button" class="btn btn--ghost">Previous</button></a>
+      {% endif %}
+      {% if page < page_count %}
+      <a href="{{ page_url(page + 1) }}"><button type="button" class="btn btn--ghost">Next</button></a>
+      <a href="{{ page_url(page_count) }}"><button type="button" class="btn btn--ghost">Last</button></a>
+      {% endif %}
+    </div>
+  </nav>
+  {% endif %}
+  {% else %}
+  <div class="state" role="status">
+    <h3>No trades match these filters</h3>
+    <p>
+      {{ total_available }} trades exist in total, {{ summary_settled }} settled.
+      Try widening the dates, clearing the quote-currency filter, or turning off
+      settled-only to include trades that never executed.
+    </p>
+    <a href="/"><button type="button" class="btn">Reset filters</button></a>
+  </div>
+  {% endif %}
+</section>
+
+</main>
+
+<footer class="foot">
+  <span>FX source <code>Frankfurter</code> &mdash; ECB reference rates, business days only, snapped back over weekends</span>
+  <span>Crypto prices are LCS's own <code>crypto_in_usd</code>, frozen at trade creation</span>
+  <span>Cash figures use <code>fiat_amount</code> as agreed, with no conversion</span>
+  <span>All arithmetic in <code>Decimal</code></span>
+  {% if stale %}<span>Serving cached trade data</span>{% endif %}
+</footer>
+</div>
+
+<script src="/static/report.js?v=2" defer></script>
+{% endblock %}

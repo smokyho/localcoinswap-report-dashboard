@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Setup &middot; LCS IDR Trading Report{% endblock %}
+
+{% block body %}
+<div class="wrap" style="max-width:760px">
+<main id="main">
+<header class="masthead">
+  <div>
+    <h1>Setup required</h1>
+    <div class="account"><span>The report cannot reach your trades yet.</span></div>
+  </div>
+</header>
+
+<div class="state state--error" role="alert">
+  <h3>Problem</h3>
+  <p>{{ error }}</p>
+</div>
+
+{% if not has_key %}
+<section class="section" aria-labelledby="howto">
+  <div class="section-head"><h2 id="howto">How to fix</h2></div>
+  <div class="table-scroll">
+    <table>
+      <tbody>
+        <tr>
+          <td style="width:52px" class="cell-strong">1</td>
+          <td class="wrap-text">
+            Create an API key at
+            <a href="https://localcoinswap.com/preferences/api-token" target="_blank" rel="noopener">Preferences &rarr; API</a>.
+            An authenticator code is required.
+          </td>
+        </tr>
+        <tr>
+          <td class="cell-strong">2</td>
+          <td class="wrap-text">
+            Copy the secret. It looks like <code class="mono">lcs_a1b2c3d4_your_secret</code>
+            and is shown only once. Write it to a <code class="mono">.env</code> file in the project root:
+            <pre class="mono" style="background:var(--bg-inset);padding:12px;border-radius:6px;margin:8px 0 0;overflow-x:auto">echo "LCS_API_KEY=lcs_a1b2c3d4_your_secret" &gt; .env
+echo "LCS_USERNAME=your_lcs_username" &gt;&gt; .env</pre>
+          </td>
+        </tr>
+        <tr>
+          <td class="cell-strong">3</td>
+          <td class="wrap-text">
+            <code class="mono">LCS_USERNAME</code> lets the report tell a buy from a sell.
+            It is auto-detected when omitted, but setting it removes the guesswork.
+          </td>
+        </tr>
+        <tr>
+          <td class="cell-strong">4</td>
+          <td class="wrap-text">Restart the server, then reload this page.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+{% else %}
+
+<section class="section" aria-labelledby="rejected">
+  <div class="section-head"><h2 id="rejected">Your key was rejected</h2></div>
+  <div class="table-scroll">
+    <table>
+      <tbody>
+        <tr><td class="wrap-text">Check <code class="mono">.env</code> for a stray quote, space, or trailing newline.</td></tr>
+        <tr><td class="wrap-text">Confirm the key is still active &mdash; it may have been revoked.</td></tr>
+        <tr><td class="wrap-text">Accounts are limited to five keys; an older key may have replaced it.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<section class="section" aria-labelledby="opts">
+  <div class="section-head">
+    <h2 id="opts">Optional settings</h2>
+    <p>All of these have working defaults</p>
+  </div>
+  <div class="table-scroll">
+    <table>
+      <caption class="sr-only">Supported environment variables</caption>
+      <thead>
+        <tr>
+          <th scope="col">Variable</th>
+          <th scope="col">Default</th>
+          <th scope="col">Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="mono">LCS_TRADE_TIMEZONE</td><td class="mono">UTC</td><td class="wrap-text cell-muted">Which calendar day a trade maps to. Near-midnight trades can land on a different day, selecting a different rate. Try <span class="mono">Asia/Jakarta</span>.</td></tr>
+        <tr><td class="mono">LCS_DISPLAY_CURRENCY</td><td class="mono">IDR</td><td class="wrap-text cell-muted">Reporting currency.</td></tr>
+        <tr><td class="mono">LCS_BASE_CURRENCY</td><td class="mono">USD</td><td class="wrap-text cell-muted">Currency that <span class="mono">crypto_in_usd</span> is quoted in.</td></tr>
+        <tr><td class="mono">LCS_PAGE_SIZE</td><td class="mono">200</td><td class="wrap-text cell-muted">The live API caps <span class="mono">limit</span> at 100 regardless.</td></tr>
+        <tr><td class="mono">LCS_MIN_INTERVAL</td><td class="mono">1.1</td><td class="wrap-text cell-muted">Seconds between requests. The API allows 60/minute per account.</td></tr>
+        <tr><td class="mono">LCS_MAX_TRADES</td><td class="mono">20000</td><td class="wrap-text cell-muted">Safety cap on how many trades are pulled.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<p><a href="/health"><button type="button" class="btn btn--ghost">Check /health</button></a></p>
+</main>
+</div>
+{% endblock %}

@@ -1,0 +1,134 @@
+{
+ "_comment": "Redacted sample of GET /trades/list/. Usernames, user UUIDs and the offer headline are replaced; monetary amounts are real because they are what the arithmetic is tested against. Note snake_case keys and the ABSENCE of crypto_in_usd -- both contradict the published spec. See docs/api-behaviour.md.",
+ "count": 1874,
+ "next": "http://api.localcoinswap.com/api/v2/trades/list/?limit=2&offset=2",
+ "results": [
+  {
+   "status": "COMPLETED",
+   "uuid": "729a0f18-b6ae-465f-be73-268c7a7106ae",
+   "buyer": {
+    "username": "acct_self",
+    "activity_status": "active",
+    "last_seen": 1791174463,
+    "user_uuid": "uuid-redacted"
+   },
+   "seller": {
+    "username": "peer_a",
+    "activity_status": "inactive",
+    "last_seen": 1779822178,
+    "user_uuid": "uuid-redacted"
+   },
+   "fiat_amount": "1548667.060000000000000000",
+   "coin_amount": "100.000000000000000000",
+   "time_created": 1718445917,
+   "coin_currency": {
+    "title": "Tether",
+    "symbol": "USDT",
+    "token_standard": "TRC20",
+    "symbol_filename": "usdt-trc20.svg",
+    "is_crypto": true,
+    "slug": "USDT-TRC20"
+   },
+   "fiat_currency": {
+    "title": "Indonesian Rupiah",
+    "symbol": "IDR",
+    "token_standard": null,
+    "symbol_filename": null,
+    "is_crypto": false,
+    "slug": "indonesian-rupiah"
+   },
+   "offer": {
+    "uuid": "946c005a-a7f7-41ec-beec-282ae0d7fba5",
+    "slug": "sell-usdt-trc20-for-idr-in-indonesia",
+    "trading_type": {
+     "id": 1,
+     "slug": "buy",
+     "name": "buy",
+     "action_name": "Buying",
+     "opposite_name": "sell",
+     "opposite_action_name": "Selling"
+    },
+    "payment_method": {
+     "name": "Bank Transfer",
+     "slug": "bank-transfers"
+    },
+    "price_formula_value": "15486.670555828881",
+    "location_name": "Denpasar",
+    "country_code": "ID",
+    "headline": "redacted",
+    "current_margin_percentage": "-6.0000000000",
+    "is_active": true
+   },
+   "offer_price_formula": {
+    "display_formula": "-6",
+    "prefix_formula": "exchange.usdtusd|v||exchange.usdidr|v||*|o||0.94|n||*|o",
+    "pricing_type": "MARGIN",
+    "market": "cmc"
+   }
+  },
+  {
+   "status": "EXPIRED",
+   "uuid": "4f33127c-461a-4c1c-a843-d983550caa59",
+   "buyer": {
+    "username": "acct_self",
+    "activity_status": "active",
+    "last_seen": 1791174463,
+    "user_uuid": "uuid-redacted"
+   },
+   "seller": {
+    "username": "peer_b",
+    "activity_status": "inactive",
+    "last_seen": 1593127622,
+    "user_uuid": "uuid-redacted"
+   },
+   "fiat_amount": "5000000.000000000000000000",
+   "coin_amount": "0.041322120000000000",
+   "time_created": 1592106649,
+   "coin_currency": {
+    "title": "Bitcoin",
+    "symbol": "BTC",
+    "token_standard": null,
+    "symbol_filename": "btc.svg",
+    "is_crypto": true,
+    "slug": "BTC"
+   },
+   "fiat_currency": {
+    "title": "Indonesian Rupiah",
+    "symbol": "IDR",
+    "token_standard": null,
+    "symbol_filename": null,
+    "is_crypto": false,
+    "slug": "indonesian-rupiah"
+   },
+   "offer": {
+    "uuid": "916fa926-d727-4353-862a-c31aea781235",
+    "slug": "sell-bitcoin-btc-for-idr-in-id",
+    "trading_type": {
+     "action_name": "\u041f\u043e\u043a\u0443\u043f\u043a\u0430",
+     "opposite_action_name": "\u041f\u0440\u043e\u0434\u0430\u0436\u0430",
+     "id": 1,
+     "opposite_name": "\u043f\u0440\u043e\u0434\u0430\u0442\u044c",
+     "name": "\u043a\u0443\u043f\u0438\u0442\u044c"
+    },
+    "payment_method": {
+     "id": 32,
+     "slug": "bank-transfers",
+     "priority": 99,
+     "name": "\u0411\u0430\u043d\u043a\u043e\u0432\u0441\u043a\u0438\u0435 \u043f\u0435\u0440\u0435\u0432\u043e\u0434\u044b"
+    },
+    "price_formula_value": "121000565.99079604",
+    "location_name": "",
+    "country_code": "ID",
+    "headline": "redacted",
+    "current_margin_percentage": "-10.0000000000",
+    "is_active": true
+   },
+   "offer_price_formula": {
+    "display_formula": "-10",
+    "prefix_formula": "exchange.btcusd|v||exchange.usdidr|v||*|o||0.9|n||*|o",
+    "market": "cmc",
+    "pricing_type": "MARGIN"
+   }
+  }
+ ]
+}
