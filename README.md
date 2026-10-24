@@ -1,7 +1,8 @@
-# LCS IDR Trading Report
+# LCS Trading Report
 
-Values LocalCoinSwap trades in **IDR using the exchange rate of the day each
+Values LocalCoinSwap trades in non USD local currency using the exchange rate of the day each
 trade happened**, rather than today's rate.
+For example here we are using IDR.
 
 ![report](docs/report.png)
 
